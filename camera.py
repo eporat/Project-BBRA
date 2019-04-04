@@ -28,7 +28,11 @@ def main():
             canvas = cv2.blur(canvas, (5,5))
             hsv = cv2.cvtColor(canvas, cv2.COLOR_BGR2HSV)
             center = detect_circles(hsv, 0, 100, 255, 100, 255, 5)
-            camera_dict.center = center
+            camera_dict['center'] = center
+
+            cv2.imshow('frame', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
     cv2.destroyAllWindows()
 
@@ -40,7 +44,7 @@ def detect_circles(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
 
     mask = cv2.bitwise_or(mask1, mask2)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    _, contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return
 

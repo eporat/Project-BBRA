@@ -4,6 +4,4 @@ class AI:
         return
 
     def get_move(self):
-        self.i += 1
-        self.i %= 256
-        return self.i
+        return
