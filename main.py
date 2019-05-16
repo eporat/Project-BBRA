@@ -6,15 +6,21 @@ import time
 from collections import deque
 import numpy as np
 import time
+import keyboard
 
 def main():
     camera = Camera(settings=dict())
     arduino = ArduinoInterface()
-    ai = AI(camera)
+    # ai = AI(camera)
 
     while camera.is_on:
-        move = ai.get_move()
-        arduino.write(str(move[0]) + " " + str(move[1]))
+        print(camera.puck.vel)
+        if camera.puck.vel[0] > 3:
+            arduino.write(1)
+
+        elif camera.puck.vel[0] < -3:
+            arduino.write(0)
+        arduino.read()
     arduino.close()
 
 if __name__ == "__main__":

@@ -20,14 +20,14 @@ class Circle:
 
 class Camera:
     def __init__(self, *, settings):
+        self.previous_mask = None
+        self.current_mask = None
         self.cap = cv2.VideoCapture(0)
         self.frame = None
         self.dtime = 0
         self.start = 0
-
-        self.dpos = deque(maxlen=6)
-        self.dtimes = deque(maxlen=6)
-
+        self.kernel_size = 8
+        self.kernel = np.ones((self.kernel_size, self.kernel_size))
         self.puck = Circle(0, 0)
         self.player = Circle(0, 0)
 
@@ -42,9 +42,6 @@ class Camera:
     def read_from_cam(self):
         while self.is_on:
             _, self.frame = self.cap.read()
-            self.dtime = time.time() - self.start
-            self.dtimes.append(self.dtime)
-            self.start = time.time()
         return
 
     def run_camera(self):
@@ -54,9 +51,6 @@ class Camera:
         cv2.createTrackbar('Hue Player', 'Sliders', 140, 180, nothing)
         cv2.createTrackbar('Sensitivity Player', 'Sliders', 2, 10, nothing)
 
-        #cap.set(cv2.CAP_PROP_FPS, 120)
-        #cap.set(3, 320)
-        #cap.set(4, 240)
         t = Thread(target=self.read_from_cam, args=[])
         t.start()
 
@@ -66,20 +60,21 @@ class Camera:
                 canvas = cv2.blur(canvas, (5,5))
                 hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
                 puck_hue = cv2.getTrackbarPos('Hue Puck', 'Sliders')
-                puck_center = detect_circles(hsv, puck_hue, 50, 255, 50, 255, cv2.getTrackbarPos('Sensitivity Puck', 'Sliders'))
+                puck_sensitivity = cv2.getTrackbarPos('Sensitivity Puck', 'Sliders')
+                puck_center = self.detect_motion(hsv, puck_hue, 50, 255, 50, 255, puck_sensitivity)
                 player_hue = cv2.getTrackbarPos('Hue Player', 'Sliders')
-                player_center = detect_circles(hsv, player_hue, 50, 255, 50, 255, cv2.getTrackbarPos('Sensitivity Player', 'Sliders'))
+                player_sensitivity = cv2.getTrackbarPos('Sensitivity Player', 'Sliders')
+                player_center = self.detect_motion(hsv, player_hue, 50, 255, 50, 255, player_sensitivity)
 
                 if puck_center is not None:
-                    #self.dpos.append(np.array(new_center) - self.puck.pos)
-                    self.puck.pos = puck_center
+                    self.puck.vel = np.array(puck_center) - self.puck.pos
+                    self.puck.pos = np.array(puck_center)
                 if player_center is not None:
-                    self.player.pos = player_center
-                    #self.pos = sum(self.dpos / self.dtimes)
+                    self.player.vel = np.array(player_center) - self.player.pos
+                    self.player.pos = np.array(player_center)
 
                 puck_r, puck_g, puck_b = colorsys.hsv_to_rgb(puck_hue / 180.0, 1.0, 1.0)
                 player_r, player_g, player_b = colorsys.hsv_to_rgb(player_hue / 180.0, 1.0, 1.0)
-                print(puck_r, puck_g, puck_b)
 
                 cv2.circle(self.frame, puck_center, 20, (puck_b * 256, puck_g * 256, puck_r * 256))
                 cv2.circle(self.frame, player_center, 20, (player_b * 256, player_g * 256, player_r * 256))
@@ -95,15 +90,25 @@ class Camera:
         return
 
 
-def detect_circles(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
-    mask1 = cv2.inRange(hsv, np.array([hue - sensitivity, sLow, vLow]), \
-        np.array([hue + sensitivity, sHigh, vHigh]))
-    mask2 = cv2.inRange(hsv, np.array([179 - hue - sensitivity, sLow, vLow]), \
-        np.array([179 - hue + sensitivity, sHigh, vHigh]))
+    def detect_motion(self, hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
+        self.current_mask = self.calculate_mask(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity)
+        cv2.imshow('mask', self.current_mask)
+        return find_center_in_mask(self.current_mask)
 
-    mask = cv2.bitwise_or(mask1, mask2)
-    cv2.imshow('mask', mask)
 
+    def calculate_mask(self, hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
+        mask1 = cv2.inRange(hsv, np.array([hue - sensitivity, sLow, vLow]), \
+            np.array([hue + sensitivity, sHigh, vHigh]))
+        mask2 = cv2.inRange(hsv, np.array([179 - hue - sensitivity, sLow, vLow]), \
+            np.array([179 - hue + sensitivity, sHigh, vHigh]))
+
+        mask = cv2.bitwise_or(mask1, mask2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, self.kernel)
+
+        return mask
+
+def find_center_in_mask(mask):
     _, contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return
@@ -116,7 +121,6 @@ def detect_circles(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
     center = int(M["m10"] / M["m00"]) , int(M["m01"]/M["m00"])
 
     return center
-
 
 def nothing(x):
     pass
