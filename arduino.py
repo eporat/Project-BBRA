@@ -2,7 +2,7 @@ import serial
 
 class ArduinoInterface:
     def __init__(self):
-        self.arduino = serial.Serial('COM4', 115200, timeout=0.1)
+        self.arduino = serial.Serial('COM4', 115200, timeout=0.01)
 
     def write(self, msg):
         self.arduino.write((str(msg)).encode())

@@ -1,27 +1,27 @@
 from camera import Camera
 import cv2
-from ai import AI
 from arduino import ArduinoInterface
 import time
 from collections import deque
 import numpy as np
 import time
 import keyboard
+from simulation import Simulation
+from time import sleep
 
 def main():
     camera = Camera(settings=dict())
-    arduino = ArduinoInterface()
-    # ai = AI(camera)
+    # arduino = ArduinoInterface()
+    sim = Simulation(camera.width, camera.height, camera=camera, draw=True)
 
     while camera.is_on:
-        print(camera.puck.vel)
-        if camera.puck.vel[0] > 3:
-            arduino.write(1)
+        striker_vel = sim.run()
+        print('Striker vel: ',striker_vel)
 
-        elif camera.puck.vel[0] < -3:
-            arduino.write(0)
-        arduino.read()
-    arduino.close()
+        #arduino.write('{} {}'.format(striker_vel.x, striker_vel.y))
+        #arduino.read()
+        sleep(0.01)
+    #arduino.close()
 
 if __name__ == "__main__":
     print("Starting camera...")

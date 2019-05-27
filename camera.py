@@ -6,31 +6,23 @@ from collections import deque
 import sys
 import threading
 import colorsys
-
-class Circle:
-    def __init__(self, x, y):
-        self.pos = np.array([x,y])
-        self.vel = np.array([0,0])
-
-    def set_vel(self, vel):
-        self.vel = vel
-
-    def set_pos(self, pos):
-        self.pos = pos
+from vector2d import Vector2D
 
 class Camera:
     def __init__(self, *, settings):
         self.previous_mask = None
         self.current_mask = None
         self.cap = cv2.VideoCapture(0)
+        self.width = int(self.cap.get(3))
+        self.height = int(self.cap.get(4))
         self.frame = None
         self.dtime = 0
         self.start = 0
-        self.kernel_size = 8
+        self.kernel_size = 4
         self.kernel = np.ones((self.kernel_size, self.kernel_size))
-        self.puck = Circle(0, 0)
-        self.player = Circle(0, 0)
-
+        self.puck = {'pos': Vector2D(1, 1)}
+        self.striker = {'pos': Vector2D(1, 1)}
+        self.table = {'min_x': 0, 'min_y': 0, 'max_x': 0, 'max_y': 0}
         self.is_on = True
 
         for setting in settings:
@@ -48,38 +40,49 @@ class Camera:
         cv2.namedWindow('Sliders', cv2.WINDOW_AUTOSIZE)
         cv2.createTrackbar('Hue Puck', 'Sliders', 140, 180, nothing)
         cv2.createTrackbar('Sensitivity Puck', 'Sliders', 2, 10, nothing)
-        cv2.createTrackbar('Hue Player', 'Sliders', 140, 180, nothing)
-        cv2.createTrackbar('Sensitivity Player', 'Sliders', 2, 10, nothing)
+        cv2.createTrackbar('Hue Striker', 'Sliders', 140, 180, nothing)
+        cv2.createTrackbar('Sensitivity Striker', 'Sliders', 2, 10, nothing)
+        cv2.createTrackbar('Hue Table', 'Sliders', 140, 180, nothing)
+        cv2.createTrackbar('Sensitivity Table', 'Sliders', 2, 10, nothing)
 
         t = Thread(target=self.read_from_cam, args=[])
         t.start()
 
         while True:
             if self.frame is not None:
-                canvas = self.frame.copy()
-                canvas = cv2.blur(canvas, (5,5))
-                hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
+                self.canvas = self.frame.copy()
+                # canvas = cv2.blur(canvas, (10,10))
+                hsv = cv2.cvtColor(self.canvas, cv2.COLOR_BGR2HSV)
+
+                table_hue = cv2.getTrackbarPos('Hue Table', 'Sliders')
+                table_sensitivity = cv2.getTrackbarPos('Sensitivity Table', 'Sliders')
+                #puck_center = self.detect_circle(hsv, puck_hue, 50, 255, 50, 255, puck_sensitivity)
+                striker_hue = cv2.getTrackbarPos('Hue Striker', 'Sliders')
+                striker_sensitivity = cv2.getTrackbarPos('Sensitivity Striker', 'Sliders')
+                striker_center = self.detect_circle(hsv, striker_hue, 50, 255, 50, 255, striker_sensitivity, 'striker mask')
+
                 puck_hue = cv2.getTrackbarPos('Hue Puck', 'Sliders')
                 puck_sensitivity = cv2.getTrackbarPos('Sensitivity Puck', 'Sliders')
-                puck_center = self.detect_motion(hsv, puck_hue, 50, 255, 50, 255, puck_sensitivity)
-                player_hue = cv2.getTrackbarPos('Hue Player', 'Sliders')
-                player_sensitivity = cv2.getTrackbarPos('Sensitivity Player', 'Sliders')
-                player_center = self.detect_motion(hsv, player_hue, 50, 255, 50, 255, player_sensitivity)
+                puck_center = self.detect_circle(hsv, puck_hue, 50, 255, 50, 255, puck_sensitivity, 'puck mask')
 
                 if puck_center is not None:
-                    self.puck.vel = np.array(puck_center) - self.puck.pos
-                    self.puck.pos = np.array(puck_center)
-                if player_center is not None:
-                    self.player.vel = np.array(player_center) - self.player.pos
-                    self.player.pos = np.array(player_center)
+                    self.puck['pos'] = Vector2D(puck_center[0], puck_center[1])
+                    s = Vector2D(0,0)
+
+
+                if striker_center is not None:
+                    self.striker['pos'] = Vector2D(striker_center[0], striker_center[1])
+                    s = Vector2D(0,0)
+
+                self.detect_table(hsv, table_hue, 50, 255, 50, 255, table_sensitivity)
 
                 puck_r, puck_g, puck_b = colorsys.hsv_to_rgb(puck_hue / 180.0, 1.0, 1.0)
-                player_r, player_g, player_b = colorsys.hsv_to_rgb(player_hue / 180.0, 1.0, 1.0)
+                striker_r, striker_g, striker_b = colorsys.hsv_to_rgb(striker_hue / 180.0, 1.0, 1.0)
 
-                cv2.circle(self.frame, puck_center, 20, (puck_b * 256, puck_g * 256, puck_r * 256))
-                cv2.circle(self.frame, player_center, 20, (player_b * 256, player_g * 256, player_r * 256))
+                cv2.circle(self.canvas, puck_center, 20, (puck_b * 256, puck_g * 256, puck_r * 256))
+                cv2.circle(self.canvas, striker_center, 20, (striker_b * 256, striker_g * 256, striker_r * 256))
 
-                cv2.imshow('frame', self.frame)
+                cv2.imshow('canvas', self.canvas)
 
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -90,11 +93,30 @@ class Camera:
         return
 
 
-    def detect_motion(self, hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
-        self.current_mask = self.calculate_mask(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity)
-        cv2.imshow('mask', self.current_mask)
-        return find_center_in_mask(self.current_mask)
+    def detect_circle(self, hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity, name):
+        mask = self.calculate_mask(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity)
+        cv2.imshow(name, mask)
+        return detect_circle_center(mask)
 
+    def detect_table(self, hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
+        mask = self.calculate_mask(hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity)
+        cv2.imshow('table mask', mask)
+        _, contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            return
+
+        contour = max(contours, key=lambda el: cv2.contourArea(el))
+        if contour is not None:
+            x,y,w,h = cv2.boundingRect(contour)
+            self.table['min_x'] = x
+            self.table['min_y'] = y
+            self.table['max_x'] = x + w
+            self.table['max_y'] = y + h
+            cv2.rectangle(self.canvas, (x, y), (x+w, y+h), (0,255,0))
+        #
+        # for cnt in contours:
+        #     if 3 <= len(cv2.approxPolyDP(cnt, 0.01 * cv2.arcLength(cnt, True), True)) <= 10:
+        cv2.drawContours(self.canvas, [contour], 0, 255, -1)
 
     def calculate_mask(self, hsv, hue, sLow, sHigh, vLow, vHigh, sensitivity):
         mask1 = cv2.inRange(hsv, np.array([hue - sensitivity, sLow, vLow]), \
@@ -108,19 +130,25 @@ class Camera:
 
         return mask
 
-def find_center_in_mask(mask):
+def detect_polygon_center(mask, min, max):
     _, contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return
 
-    blob = max(contours, key=lambda el: cv2.contourArea(el))
+    blobs = sorted(contours, key=lambda el: cv2.contourArea(el), reverse=True)
 
-    M = cv2.moments(blob)
-    if M["m00"] == 0:
-        return
-    center = int(M["m10"] / M["m00"]) , int(M["m01"]/M["m00"])
+    for blob in blobs:
+        if min <= len(cv2.approxPolyDP(blob, 0.01 * cv2.arcLength(blob, True), True)) <= max:
+            M = cv2.moments(blob)
+            if M["m00"] == 0:
+                return
+            center = int(M["m10"] / M["m00"]) , int(M["m01"]/M["m00"])
+            return center
 
-    return center
+def detect_circle_center(mask):
+    return detect_polygon_center(mask, 1, float("inf"))
+
+
 
 def nothing(x):
     pass
